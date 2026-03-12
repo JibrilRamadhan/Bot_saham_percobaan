@@ -1,0 +1,21 @@
+# File credential — JANGAN di-upload ke GitHub!
+.env
+
+# Virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Cache Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# VS Code
+.vscode/
+
+# Data caching yfinance
+*.pkl

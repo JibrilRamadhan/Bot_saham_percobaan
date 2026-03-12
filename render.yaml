@@ -1,0 +1,20 @@
+services:
+  - type: worker                          # Background Worker (bukan web server)
+    name: ihsg-radar-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    plan: free                            # Ganti ke 'starter' agar tidak sleep
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false                       # Isi manual di Render Dashboard
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RADAR_INTERVAL_MINUTES
+        value: "15"
+      - key: MARKET_OPEN_HOUR
+        value: "9"
+      - key: MARKET_CLOSE_HOUR
+        value: "16"
