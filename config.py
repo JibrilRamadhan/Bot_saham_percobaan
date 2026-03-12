@@ -19,10 +19,16 @@ TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # -------------------------------------------------------
-# KONFIGURASI GEMINI API
+# KONFIGURASI GEMINI API (Fallback)
 # -------------------------------------------------------
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL: str = "gemini-2.0-flash"  # Akurasi lebih baik dari 1.5-flash, rate limit sama
+
+# -------------------------------------------------------
+# KONFIGURASI GROQ API (Primary - 30 RPM gratis, lebih cepat)
+# -------------------------------------------------------
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL: str = "llama-3.3-70b-versatile"  # Model terbaik Groq untuk analisa keuangan
 
 # -------------------------------------------------------
 # KONFIGURASI WATCHLIST SAHAM

@@ -15,8 +15,11 @@ beautifulsoup4>=4.12.0
 requests>=2.31.0
 lxml>=4.9.0
 
-# === AI / Gemini API ===
+# === AI / Gemini API (fallback) ===
 google-genai>=0.8.0
+
+# === AI / Groq API (primary - faster, higher rate limit) ===
+groq>=0.11.0
 
 # === Telegram Bot ===
 python-telegram-bot[job-queue]>=20.7
