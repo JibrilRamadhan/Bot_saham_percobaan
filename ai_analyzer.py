@@ -115,7 +115,7 @@ Berikan analisa sentimen dalam format JSON sesuai instruksi."""
                 model=config.GEMINI_MODEL,
                 contents=full_prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.2,      # Rendah agar respons konsisten & faktual
+                    temperature=0.2,
                     top_p=0.8,
                     max_output_tokens=500,
                 ),
@@ -125,22 +125,22 @@ Berikan analisa sentimen dalam format JSON sesuai instruksi."""
             # Parse JSON dari respons Gemini
             result = _parse_gemini_response(response_text)
             result["headlines_dianalisa"] = len(headlines)
-            
+
             logger.info(f"[AI] ✅ Sentimen untuk {kode_bersih}: {result['sentimen']} (keyakinan: {result['skor_keyakinan']}/10)")
             return result
 
         except Exception as e:
             error_str = str(e).lower()
-            
-            # Handle rate limit secara khusus
-            if "quota" in error_str or "rate" in error_str or "429" in error_str:
-                wait_time = 60 * attempt  # Tunggu lebih lama setiap retry
-                logger.warning(f"[AI] Rate limit tercapai, menunggu {wait_time}s... (percobaan {attempt}/{max_retry})")
+
+            # Handle rate limit / quota exceeded — tunggu lebih pendek
+            if any(k in error_str for k in ["quota", "rate", "429", "resource_exhausted", "too many"]):
+                wait_time = 15 * attempt  # 15s, 30s, 45s
+                logger.warning(f"[AI] Rate limit Gemini, tunggu {wait_time}s (percobaan {attempt}/{max_retry})")
                 time.sleep(wait_time)
             else:
                 logger.error(f"[AI] Error Gemini API (percobaan {attempt}/{max_retry}): {e}")
                 if attempt < max_retry:
-                    time.sleep(5 * attempt)
+                    time.sleep(3)
 
     # Jika semua percobaan gagal, kembalikan Neutral sebagai fallback aman
     logger.error(f"[AI] ❌ Semua percobaan API gagal untuk {kode_bersih}")

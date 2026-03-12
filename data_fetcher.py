@@ -264,32 +264,26 @@ def detect_signal(df: pd.DataFrame) -> dict:
 def calculate_pivot_points(df: pd.DataFrame) -> dict:
     """
     Menghitung Support dan Resistance menggunakan metode Pivot Point Klasik.
-    
-    Rumus Pivot Point Klasik (berdasarkan candle sebelumnya):
-        PP = (High + Low + Close) / 3
-        R1 = (2 × PP) - Low
-        R2 = PP + (High - Low)
-        S1 = (2 × PP) - High
-        S2 = PP - (High - Low)
-
-    Args:
-        df: DataFrame OHLCV yang sudah dihitung indikatornya.
-
-    Returns:
-        Dictionary berisi nilai PP, R1, R2, S1, S2.
+    PP = (H+L+C)/3 | R1=(2×PP)-L | R2=PP+(H-L) | S1=(2×PP)-H | S2=PP-(H-L)
     """
     try:
-        # Gunakan data dari hari sebelumnya (daily) untuk perhitungan pivot
-        # Ambil dari data 15m, konversi ke daily untuk akurasi lebih baik
-        df_daily = df.resample("D", on=df.index.name if df.index.name else None).agg(
+        df_work = df.copy()
+
+        # Pastikan index adalah DatetimeIndex untuk resample
+        if not isinstance(df_work.index, pd.DatetimeIndex):
+            df_work = df_work.set_index(pd.to_datetime(df_work.index))
+
+        # Konversi ke daily untuk pivot point yang lebih akurat
+        df_daily = df_work.resample("D").agg(
             {"high": "max", "low": "min", "close": "last"}
         ).dropna()
 
-        # Jika tidak bisa resample, gunakan candle terakhir sebagai referensi
-        if df_daily.empty or len(df_daily) < 2:
-            prev = df.iloc[-2]
-        else:
+        # Butuh minimal 2 hari data untuk pivot hari sebelumnya
+        if len(df_daily) >= 2:
             prev = df_daily.iloc[-2]
+        else:
+            # Fallback: gunakan candle terakhir dari data 15m
+            prev = df_work.iloc[-2]
 
         high = float(prev["high"])
         low = float(prev["low"])

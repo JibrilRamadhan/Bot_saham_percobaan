@@ -169,28 +169,21 @@ def filter_relevant_news(articles: list[dict], kode_saham: str) -> list[dict]:
 def get_news_for_stock(kode_saham: str, max_articles: int = config.MAX_NEWS_ARTICLES) -> list[str]:
     """
     Fungsi utama untuk mencari berita terbaru tentang sebuah saham.
-    Menggabungkan hasil dari semua sumber RSS dan Yahoo Finance.
-    
-    Args:
-        kode_saham: Kode saham (dengan atau tanpa .JK).
-        max_articles: Jumlah maksimum berita yang dikembalikan.
-        
-    Returns:
-        List string berisi headline berita yang relevan.
-        Mengembalikan list kosong jika tidak ada berita.
+    Menggabungkan hasil dari semua sumber RSS dan Yahoo Finance untuk akurasi tinggi.
+    Waktu eksekusi normal: 30-90 detik.
     """
     kode_bersih = kode_saham.upper().replace(".JK", "")
     ticker_jk = f"{kode_bersih}.JK"
     all_articles = []
 
-    logger.info(f"[SCRAPER] Mencari berita untuk: {kode_bersih}")
+    logger.info(f"[SCRAPER] Mencari berita untuk: {kode_bersih} (semua sumber)")
 
-    # 1. Ambil dari semua RSS Feed (kecuali Yahoo yg pakai format berbeda)
+    # 4 sumber RSS utama — setiap sumber diberi timeout 8 detik
     rss_sources = [
-        ("CNBC Indonesia", "https://www.cnbcindonesia.com/rss/market"),
-        ("Kontan", "https://www.kontan.co.id/rss/investasi.rss"),
-        ("Bisnis.com", "https://market.bisnis.com/rss/feed.aspx?category=market"),
+        ("CNBC Indonesia", "https://www.cnbcindonesia.com/rss"),
+        ("Kontan Investasi", "https://www.kontan.co.id/rss/investasi.rss"),
         ("Kontan Saham", "https://www.kontan.co.id/rss/saham.rss"),
+        ("Bisnis.com", "https://ekonomi.bisnis.com/feed"),
     ]
 
     for nama_sumber, url in rss_sources:
@@ -200,22 +193,35 @@ def get_news_for_stock(kode_saham: str, max_articles: int = config.MAX_NEWS_ARTI
             if filtered:
                 logger.info(f"[SCRAPER] {nama_sumber}: {len(filtered)} berita relevan ditemukan")
             all_articles.extend(filtered)
-            time.sleep(0.5)  # Jeda antar request untuk menghindari rate limit
+            time.sleep(0.3)  # Jeda pendek antar request
         except Exception as e:
             logger.warning(f"[SCRAPER] Error sumber {nama_sumber}: {e}")
 
-    # 2. Ambil dari Yahoo Finance (scraping langsung per ticker)
-    yahoo_articles = fetch_yahoo_finance_news(ticker_jk, timeout=10)
-    all_articles.extend(yahoo_articles)
+    # Yahoo Finance — scraping langsung per ticker (lebih spesifik)
+    try:
+        yahoo_articles = fetch_yahoo_finance_news(ticker_jk, timeout=10)
+        if yahoo_articles:
+            logger.info(f"[SCRAPER] Yahoo Finance: {len(yahoo_articles)} berita ditemukan")
+        all_articles.extend(yahoo_articles)
+    except Exception as e:
+        logger.warning(f"[SCRAPER] Yahoo Finance error: {e}")
 
-    # 3. Jika tidak ada berita relevan, lakukan Google News RSS search sebagai fallback
+    # Fallback: Google News RSS jika semua sumber kosong
     if not all_articles:
-        logger.info(f"[SCRAPER] Tidak ada berita dari sumber utama, mencoba Google News RSS...")
-        google_news_url = f"https://news.google.com/rss/search?q=saham+{kode_bersih}+IHSG&hl=id&gl=ID&ceid=ID:id"
-        google_articles = fetch_from_rss(google_news_url, timeout=10)
-        all_articles.extend(google_articles[:max_articles])
+        logger.info(f"[SCRAPER] Fallback ke Google News RSS untuk {kode_bersih}...")
+        google_news_url = (
+            f"https://news.google.com/rss/search"
+            f"?q=saham+{kode_bersih}+IHSG&hl=id&gl=ID&ceid=ID:id"
+        )
+        try:
+            google_articles = fetch_from_rss(google_news_url, timeout=10)
+            all_articles.extend(google_articles[:max_articles])
+            if all_articles:
+                logger.info(f"[SCRAPER] Google News: {len(all_articles)} berita ditemukan")
+        except Exception as e:
+            logger.warning(f"[SCRAPER] Google News fallback error: {e}")
 
-    # 4. Hapus duplikat berdasarkan judul
+    # Hapus duplikat berdasarkan judul
     seen_titles = set()
     unique_articles = []
     for article in all_articles:
@@ -223,13 +229,12 @@ def get_news_for_stock(kode_saham: str, max_articles: int = config.MAX_NEWS_ARTI
             seen_titles.add(article["judul"])
             unique_articles.append(article)
 
-    # 5. Ambil hanya headline (judul) dan batasi jumlahnya
     headlines = [art["judul"] for art in unique_articles[:max_articles]]
 
     if headlines:
-        logger.info(f"[SCRAPER] ✅ Total {len(headlines)} berita ditemukan untuk {kode_bersih}")
+        logger.info(f"[SCRAPER] ✅ Total {len(headlines)} berita unik untuk {kode_bersih}")
     else:
-        logger.warning(f"[SCRAPER] ⚠️ Tidak ada berita ditemukan untuk {kode_bersih}")
+        logger.warning(f"[SCRAPER] ⚠️ Tidak ada berita untuk {kode_bersih} — sentimen default Neutral")
 
     return headlines
 
