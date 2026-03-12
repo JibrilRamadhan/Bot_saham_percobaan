@@ -13,32 +13,23 @@ import time
 import re
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 import config
 
 logger = logging.getLogger(__name__)
 
-# Inisialisasi Gemini API dengan API Key dari konfigurasi
-genai.configure(api_key=config.GEMINI_API_KEY)
-
-# Model Gemini yang digunakan
-_model = None
+# Inisialisasi Gemini client dengan API Key dari konfigurasi
+_client = None
 
 
-def get_gemini_model():
-    """Lazy initialization model Gemini untuk menghindari error di awal startup."""
-    global _model
-    if _model is None:
-        _model = genai.GenerativeModel(
-            model_name=config.GEMINI_MODEL,
-            generation_config={
-                "temperature": 0.2,       # Rendah agar respons konsisten & faktual
-                "top_p": 0.8,
-                "max_output_tokens": 500,  # Batasi output agar hemat token
-            },
-        )
-    return _model
+def get_gemini_client() -> genai.Client:
+    """Lazy initialization Gemini client untuk menghindari error di awal startup."""
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=config.GEMINI_API_KEY)
+    return _client
 
 
 # ----------------------------------------------------------------
@@ -118,9 +109,17 @@ Berikan analisa sentimen dalam format JSON sesuai instruksi."""
     for attempt in range(1, max_retry + 1):
         try:
             logger.info(f"[AI] Mengirim {len(headlines)} headline ke Gemini untuk {kode_bersih} (percobaan {attempt})")
-            
-            model = get_gemini_model()
-            response = model.generate_content(full_prompt)
+
+            client = get_gemini_client()
+            response = client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,      # Rendah agar respons konsisten & faktual
+                    top_p=0.8,
+                    max_output_tokens=500,
+                ),
+            )
             response_text = response.text.strip()
 
             # Parse JSON dari respons Gemini
