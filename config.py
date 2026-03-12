@@ -22,7 +22,7 @@ TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 # KONFIGURASI GEMINI API
 # -------------------------------------------------------
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL: str = "gemini-1.5-flash"  # Model cepat & hemat token untuk analisa berita
+GEMINI_MODEL: str = "gemini-2.0-flash"  # Akurasi lebih baik dari 1.5-flash, rate limit sama
 
 # -------------------------------------------------------
 # KONFIGURASI WATCHLIST SAHAM
@@ -87,6 +87,10 @@ NEWS_RSS_FEEDS: list[dict] = [
 
 # Jumlah berita yang akan diambil per saham
 MAX_NEWS_ARTICLES: int = 5
+
+# Cache sentimen: hasil analisa Gemini disimpan selama N menit
+# Mencegah pemanggilan API berulang untuk saham yang sama
+SENTIMENT_CACHE_TTL_MINUTES: int = 30
 
 # -------------------------------------------------------
 # VALIDASI KONFIGURASI MINIMUM

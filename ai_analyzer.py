@@ -23,6 +23,36 @@ logger = logging.getLogger(__name__)
 # Inisialisasi Gemini client dengan API Key dari konfigurasi
 _client = None
 
+# ----------------------------------------------------------------
+# SENTIMENT CACHE (in-memory)
+# ----------------------------------------------------------------
+# Menyimpan hasil analisa Gemini agar tidak memanggil API berulang
+# Format: { 'INET': {'result': {...}, 'timestamp': datetime} }
+_sentiment_cache: dict = {}
+
+
+def _get_cached_sentiment(kode_saham: str) -> dict | None:
+    """Ambil hasil sentimen dari cache jika masih valid (< 30 menit)."""
+    from datetime import datetime, timedelta
+    if kode_saham not in _sentiment_cache:
+        return None
+    cached = _sentiment_cache[kode_saham]
+    age = datetime.now() - cached["timestamp"]
+    if age < timedelta(minutes=config.SENTIMENT_CACHE_TTL_MINUTES):
+        sisa = int((timedelta(minutes=config.SENTIMENT_CACHE_TTL_MINUTES) - age).total_seconds() / 60)
+        logger.info(f"[AI] 💾 Cache hit untuk {kode_saham} (valid {sisa} menit lagi) — skip API call")
+        return cached["result"]
+    # Cache kadaluarsa
+    del _sentiment_cache[kode_saham]
+    return None
+
+
+def _save_to_cache(kode_saham: str, result: dict) -> None:
+    """Simpan hasil sentimen ke cache."""
+    from datetime import datetime
+    _sentiment_cache[kode_saham] = {"result": result, "timestamp": datetime.now()}
+    logger.info(f"[AI] 💾 Hasil sentimen {kode_saham} disimpan ke cache (TTL: {config.SENTIMENT_CACHE_TTL_MINUTES} menit)")
+
 
 def get_gemini_client() -> genai.Client:
     """Lazy initialization Gemini client untuk menghindari error di awal startup."""
@@ -81,6 +111,13 @@ def analyze_sentiment(
     """
     kode_bersih = kode_saham.upper().replace(".JK", "")
 
+    # --- Cek cache terlebih dahulu sebelum panggil API ---
+    cached = _get_cached_sentiment(kode_bersih)
+    if cached is not None:
+        cached_copy = cached.copy()
+        cached_copy["dari_cache"] = True
+        return cached_copy
+
     # Jika tidak ada berita, kembalikan Neutral sebagai default aman
     if not headlines:
         logger.warning(f"[AI] Tidak ada berita untuk {kode_bersih}, defaulting ke Neutral")
@@ -125,6 +162,9 @@ Berikan analisa sentimen dalam format JSON sesuai instruksi."""
             # Parse JSON dari respons Gemini
             result = _parse_gemini_response(response_text)
             result["headlines_dianalisa"] = len(headlines)
+
+            # Simpan ke cache agar panggilan berikutnya tidak perlu hit API
+            _save_to_cache(kode_bersih, result)
 
             logger.info(f"[AI] ✅ Sentimen untuk {kode_bersih}: {result['sentimen']} (keyakinan: {result['skor_keyakinan']}/10)")
             return result
