@@ -14,6 +14,7 @@ import asyncio
 import logging
 import html
 import io
+import gc
 import os
 from datetime import datetime, time as dtime
 
@@ -147,7 +148,13 @@ def generate_chart(df: pd.DataFrame, kode: str, screening_data: dict) -> io.Byte
         )
         fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
                     facecolor="#0D0D0D")
-        plt.close(fig)
+
+        # Bebaskan semua memori matplotlib segera setelah render
+        # Penting untuk server free tier (RAM 500MB) agar tidak OOM
+        plt.close(fig)       # Tutup figure spesifik ini
+        plt.close("all")     # Tutup semua figure yang mungkin masih terbuka
+        gc.collect()         # Paksa garbage collector bersihkan sisa memori
+
         buf.seek(0)
         logger.info(f"[CHART] ✅ Chart berhasil dibuat untuk {kode}")
         return buf
