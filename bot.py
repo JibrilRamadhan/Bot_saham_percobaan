@@ -34,7 +34,10 @@ from telegram.constants import ParseMode
 
 import config
 from config import validate_config, WIB
-from data_fetcher import full_screening, format_ticker, get_clean_code
+from data_fetcher import (
+    full_screening, format_ticker, get_clean_code,
+    scan_kompas100_buy, scan_kompas100_danger,
+)
 from news_scraper import get_news_for_stock
 from ai_analyzer import analyze_sentiment, is_signal_approved, get_final_recommendation
 
@@ -552,8 +555,120 @@ async def cmd_screening(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # ----------------------------------------------------------------
-# CALLBACK QUERY
+# /REKOMENDASI
 # ----------------------------------------------------------------
+async def cmd_rekomendasi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scan Kompas100 dan tampilkan top kandidat BUY hari ini."""
+    await update.message.reply_chat_action("typing")
+    msg = await update.message.reply_text(
+        f"{EMOJI['radar']} Scanning <b>{len(config.KOMPAS100)} saham</b> Kompas100 untuk kandidat BUY..."
+        f"\n<i>Proses sekitar 30-60 detik...</i>",
+        parse_mode=ParseMode.HTML)
+
+    try:
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, scan_kompas100_buy, config.KOMPAS100)
+
+        if not candidates:
+            await msg.edit_text(
+                f"{EMOJI['info']} Tidak ada kandidat BUY saat ini.\n"
+                f"Filter: naik +{config.VOLATILITY_MIN_PCT}%-{config.VOLATILITY_MAX_PCT}% + volume surge + score ≥{config.TECHNICAL_SCORE_BUY}.",
+                parse_mode=ParseMode.HTML)
+            return
+
+        waktu = datetime.now(WIB).strftime("%d %b %Y, %H:%M WIB")
+        baris = []
+        for i, c in enumerate(candidates, 1):
+            kode = c["kode"]
+            harga = c["harga_terakhir"]
+            pct = c["perubahan_pct"]
+            score = c["technical_score"]
+            sl = c["risk_management"]["stop_loss"]
+            tp = c["risk_management"]["target_price"]
+            vol_ratio = c["kondisi"]["volume"]["rasio"]
+            bb_txt = " ⚡SQUEEZE" if c["kondisi"]["bollinger"]["squeeze"] else ""
+            filled = round(score / 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            baris.append(
+                f"<b>{i}. {kode}</b>{bb_txt}\n"
+                f"   💰 <code>Rp {harga:,.0f}</code> 📈 <b>+{pct:.1f}%</b> | Vol ×{vol_ratio:.1f}\n"
+                f"   [{bar}] <b>{score}/100</b>\n"
+                f"   🛑 SL: <code>Rp {sl:,.0f}</code> | 🎯 TP: <code>Rp {tp:,.0f}</code>"
+            )
+
+        teks = (
+            f"{EMOJI['rocket']} <b>TOP KANDIDAT BUY HARI INI</b>\n"
+            f"Dari {len(config.KOMPAS100)} saham Kompas100\n"
+            f"Filter: naik +{config.VOLATILITY_MIN_PCT}%-{config.VOLATILITY_MAX_PCT}% + Volume Surge\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            + "\n\n".join(baris)
+            + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{EMOJI['clock']} {waktu}\n"
+            f"{EMOJI['info']} <i>Gunakan /screening [KODE] untuk analisa chart lengkap</i>"
+        )
+        await msg.edit_text(teks, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error(f"[BOT] Error /rekomendasi: {e}")
+        await msg.edit_text(f"{EMOJI['cross']} Error saat scan. Coba lagi.", parse_mode=ParseMode.HTML)
+
+
+# ----------------------------------------------------------------
+# /DANGER
+# ----------------------------------------------------------------
+async def cmd_danger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scan Kompas100 dan tampilkan saham berbahaya/merah hari ini."""
+    await update.message.reply_chat_action("typing")
+    msg = await update.message.reply_text(
+        f"{EMOJI['warning']} Scanning <b>{len(config.KOMPAS100)} saham</b> Kompas100 untuk deteksi bahaya..."
+        f"\n<i>Proses sekitar 30-60 detik...</i>",
+        parse_mode=ParseMode.HTML)
+
+    try:
+        dangerous = await asyncio.get_event_loop().run_in_executor(
+            None, scan_kompas100_danger, config.KOMPAS100)
+
+        if not dangerous:
+            await msg.edit_text(
+                f"{EMOJI['check']} Tidak ada saham yang memasuki zona bahaya saat ini.\n"
+                f"Pasar relatif aman hari ini! {EMOJI['bullish']}",
+                parse_mode=ParseMode.HTML)
+            return
+
+        waktu = datetime.now(WIB).strftime("%d %b %Y, %H:%M WIB")
+        baris = []
+        for i, d in enumerate(dangerous, 1):
+            kode = d["kode"]
+            harga = d["harga_terakhir"]
+            pct = d["perubahan_pct"]
+            score = d["technical_score"]
+            rsi = d["kondisi"]["rsi"]["nilai"]
+            dtype = d.get("danger_type", "DROP")
+            badge = "💥 DROP BESAR" if dtype == "DROP" else "🔥 OVERBOUGHT"
+            vol_ratio = d["kondisi"]["volume"]["rasio"]
+            baris.append(
+                f"<b>{i}. {kode}</b> — {badge}\n"
+                f"   💰 <code>Rp {harga:,.0f}</code> 📉 <b>{pct:+.1f}%</b>\n"
+                f"   RSI: {rsi:.1f} | Vol ×{vol_ratio:.1f} | Score: {score}/100"
+            )
+
+        teks = (
+            f"{EMOJI['warning']} <b>RADAR BAHAYA — SAHAM MERAH HARI INI</b>\n"
+            f"Dari {len(config.KOMPAS100)} saham Kompas100\n"
+            f"Kriteria: Turun ≥{abs(config.DANGER_DROP_PCT):.1f}% atau RSI Overbought ekstrem\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            + "\n\n".join(baris)
+            + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{EMOJI['clock']} {waktu}\n"
+            f"{EMOJI['info']} <i>Hindari masuk posisi pada saham di atas! {EMOJI['shield']}</i>"
+        )
+        await msg.edit_text(teks, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error(f"[BOT] Error /danger: {e}")
+        await msg.edit_text(f"{EMOJI['cross']} Error saat scan. Coba lagi.", parse_mode=ParseMode.HTML)
+
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -647,6 +762,8 @@ async def post_init(application: Application) -> None:
     commands = [
         BotCommand("start", "Menu utama"),
         BotCommand("screening", "Analisa + Chart saham (contoh: /screening INET)"),
+        BotCommand("rekomendasi", "Top saham kandidat BUY hari ini dari Kompas100"),
+        BotCommand("danger", "Radar saham berbahaya/merah hari ini"),
         BotCommand("watchlist", "Daftar saham radar"),
         BotCommand("help", "Panduan penggunaan"),
     ]
@@ -669,6 +786,8 @@ def main() -> None:
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("watchlist", cmd_watchlist))
     application.add_handler(CommandHandler("screening", cmd_screening))
+    application.add_handler(CommandHandler("rekomendasi", cmd_rekomendasi))
+    application.add_handler(CommandHandler("danger", cmd_danger))
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     job_queue = application.job_queue

@@ -427,7 +427,162 @@ if __name__ == "__main__":
         print(f"Saham: {hasil['kode']} | Harga: Rp {hasil['harga_terakhir']:,.0f}")
         print(f"Score Teknikal: {hasil['technical_score']}/100")
         print(f"ATR Stop Loss: Rp {hasil['risk_management']['stop_loss']:,.0f}")
-        print(f"Target: Rp {hasil['risk_management']['target_price']:,.0f}")
-        print(f"Daily Uptrend: {hasil['daily_trend']['uptrend_daily']}")
-        print(f"BB Squeeze: {hasil['kondisi']['bollinger']['squeeze']}")
-        print(f"BB Breakout: {hasil['kondisi']['bollinger']['breakout']}")
+
+
+# ----------------------------------------------------------------
+# BULK DOWNLOAD (v3.0) - Tarik 100 Saham Sekaligus
+# ----------------------------------------------------------------
+def bulk_fetch_ohlcv(kode_list: list[str], interval: str = "15m", period: str = "2d") -> dict:
+    """
+    Download data OHLCV untuk banyak saham SEKALIGUS dalam 1 request yfinance.
+    Jauh lebih cepat daripada looping satu per satu.
+
+    Returns:
+        dict: { 'BBCA': DataFrame, 'TLKM': DataFrame, ... }
+    """
+    tickers = [format_ticker(k) for k in kode_list]
+    tickers_str = " ".join(tickers)
+
+    try:
+        logger.info(f"[BULK] Mengunduh {len(tickers)} saham sekaligus...")
+        raw = yf.download(
+            tickers=tickers_str,
+            interval=interval,
+            period=period,
+            group_by="ticker",
+            progress=False,
+            auto_adjust=True,
+            threads=True,
+        )
+        result = {}
+        for ticker in tickers:
+            kode = get_clean_code(ticker)
+            try:
+                if len(tickers) == 1:
+                    # Single ticker: tidak ada multi-index
+                    df = raw.copy()
+                else:
+                    df = raw[ticker].copy()
+
+                if df is None or df.empty:
+                    continue
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df.columns = [c.lower() for c in df.columns]
+                df.dropna(subset=["close", "volume"], inplace=True)
+                if len(df) > 10:
+                    result[kode] = df
+            except Exception:
+                continue
+
+        logger.info(f"[BULK] ✅ {len(result)}/{len(tickers)} saham berhasil diunduh")
+        return result
+
+    except Exception as e:
+        logger.error(f"[BULK] Error bulk download: {e}")
+        return {}
+
+
+def quick_scan(kode_saham: str, df: pd.DataFrame) -> dict | None:
+    """
+    Versi ringan dari full_screening — tanpa fetch info, tanpa daily trend.
+    Digunakan untuk scan massal /rekomendasi dan /danger.
+    Input df sudah di-lowercase kolomnya.
+    """
+    try:
+        df_ind = calculate_indicators(df)
+        if df_ind is None or len(df_ind) < 3:
+            return None
+
+        sinyal = detect_signal(df_ind)
+        harga = sinyal["harga_terakhir"]
+
+        # Perubahan harga vs candle pertama hari ini
+        # Ambil close sekitar 27 candle lalu (≈ 1 hari kalau interval 15m)
+        lookback = min(27, len(df_ind) - 1)
+        harga_ref = float(df_ind.iloc[-lookback]["close"])
+        perubahan_pct = ((harga - harga_ref) / harga_ref) * 100 if harga_ref > 0 else 0
+
+        risk = calculate_risk_management(df_ind, harga)
+
+        # Score ringan tanpa daily trend
+        score_ringan = calculate_technical_score(sinyal, {"uptrend_daily": False})
+
+        return {
+            "kode": kode_saham,
+            "harga_terakhir": harga,
+            "perubahan_pct": round(perubahan_pct, 2),
+            "technical_score": score_ringan,
+            "risk_management": risk,
+            "sinyal_valid": sinyal["sinyal_valid"],
+            "kondisi": sinyal["kondisi"],
+        }
+
+    except Exception as e:
+        logger.warning(f"[QUICK_SCAN] Error {kode_saham}: {e}")
+        return None
+
+
+def scan_kompas100_buy(kode_list: list[str]) -> list[dict]:
+    """
+    Scan semua saham di kode_list untuk mencari kandidat BUY.
+    Filter: technical_score >= config.TECHNICAL_SCORE_BUY
+            AND perubahan_pct dalam range VOLATILITY_MIN - VOLATILITY_MAX
+            AND volume surge
+    """
+    logger.info(f"[REKO] Mulai scan {len(kode_list)} saham untuk kandidat BUY...")
+    data_map = bulk_fetch_ohlcv(kode_list)
+    candidates = []
+
+    for kode, df in data_map.items():
+        result = quick_scan(kode, df)
+        if result is None:
+            continue
+        score = result["technical_score"]
+        pct = result["perubahan_pct"]
+        vol_surge = result["kondisi"]["volume"]["status"]
+
+        # Filter volatilitas sweet spot
+        in_sweet_spot = config.VOLATILITY_MIN_PCT <= pct <= config.VOLATILITY_MAX_PCT
+        if score >= config.TECHNICAL_SCORE_BUY and in_sweet_spot and vol_surge:
+            candidates.append(result)
+
+    candidates.sort(key=lambda x: x["technical_score"], reverse=True)
+    logger.info(f"[REKO] ✅ {len(candidates)} kandidat BUY ditemukan")
+    return candidates[:10]  # Top 10
+
+
+def scan_kompas100_danger(kode_list: list[str]) -> list[dict]:
+    """
+    Scan semua saham di kode_list untuk mendeteksi saham BERBAHAYA.
+    Filter: perubahan_pct <= DANGER_DROP_PCT (turun >= 2.5%)
+            OR (RSI overbought AND volume turun)
+    """
+    logger.info(f"[DANGER] Mulai scan {len(kode_list)} saham untuk deteksi bahaya...")
+    data_map = bulk_fetch_ohlcv(kode_list)
+    dangerous = []
+
+    for kode, df in data_map.items():
+        result = quick_scan(kode, df)
+        if result is None:
+            continue
+        pct = result["perubahan_pct"]
+        rsi = result["kondisi"]["rsi"]["nilai"]
+        score = result["technical_score"]
+
+        # Saham dianggap berbahaya jika:
+        # 1. Turun >= 2.5% dalam sehari, ATAU
+        # 2. RSI overbought (> 75) dengan score lemah (potensi reversal turun)
+        is_dropping = pct <= config.DANGER_DROP_PCT
+        is_overbought_weak = rsi > 75 and score < 40
+
+        if is_dropping or is_overbought_weak:
+            # Semakin merah semakin atas daftar
+            result["danger_score"] = abs(pct) if is_dropping else rsi / 10
+            result["danger_type"] = "DROP" if is_dropping else "OVERBOUGHT"
+            dangerous.append(result)
+
+    dangerous.sort(key=lambda x: x["danger_score"], reverse=True)
+    logger.info(f"[DANGER] ⚠️ {len(dangerous)} saham berbahaya terdeteksi")
+    return dangerous[:10]  # Top 10 paling berbahaya
+
